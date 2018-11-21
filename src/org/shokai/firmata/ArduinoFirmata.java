@@ -10,7 +10,10 @@ import android.os.*;
 import android.content.*;
 import android.util.Log;
 
-public class ArduinoFirmata{
+import java.util.ArrayList;
+import java.util.List;
+
+public class ArduinoFirmata {
     public final static String VERSION = "0.2.0";
     public final static String TAG = "ArduinoFirmata";
 
@@ -34,7 +37,9 @@ public class ArduinoFirmata{
     private final byte START_SYSEX     = (byte)0xF0;
     private final byte END_SYSEX       = (byte)0xF7;
 
-    private UsbSerialDriver usb;
+    private UsbSerialDriver driver;
+    private UsbDeviceConnection connection;
+    private UsbSerialPort port;
     private Context context;
     private Thread th_receive = null;
     private ArduinoFirmataEventHandler handler;
@@ -64,14 +69,24 @@ public class ArduinoFirmata{
     public ArduinoFirmata(android.app.Activity context){
         this.context = context;
         UsbManager manager = (UsbManager) context.getSystemService(Context.USB_SERVICE);
-        this.usb = UsbSerialProber.acquire(manager);
+        List<UsbSerialDriver> availableDrivers = UsbSerialProber.getDefaultProber().findAllDrivers(manager);
+        if (availableDrivers.isEmpty()) {
+            return;
+        }
+        this.driver = availableDrivers.get(0) ;
+        this.connection = manager.openDevice(driver.getDevice());
+        if (connection == null) {
+            // You probably need to call UsbManager.requestPermission(driver.getDevice(), ..)
+            return;
+        }
     }
 
     public void connect() throws IOException, InterruptedException{
-        if(this.usb == null) throw new IOException("device not found");
+        if(this.driver == null) throw new IOException("device not found");
+        this.port = this.driver.getPorts().get(0);
         try{
-            this.usb.open();
-            this.usb.setBaudRate(57600);
+            this.port.open(this.connection);
+            this.port.setParameters(115200, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE);
             Thread.sleep(3000);
         }
         catch(InterruptedException e){
@@ -86,7 +101,7 @@ public class ArduinoFirmata{
                         while(isOpen()){
                             try{
                                 byte buf[] = new byte[4096];
-                                int size = usb.read(buf, 100);
+                                int size = port.read(buf, 100);
                                 if(size > 0){
                                     for(int i = 0; i < size; i++){
                                         processInput(buf[i]);
@@ -119,13 +134,13 @@ public class ArduinoFirmata{
     }
 
     public boolean isOpen(){
-        return this.usb != null;
+        return this.driver != null;
     }
 
     public boolean close(){
         try{
-            this.usb.close();
-            this.usb = null;
+            this.port.close();
+            this.port = null;
             return true;
         }
         catch(IOException e){
@@ -136,7 +151,7 @@ public class ArduinoFirmata{
 
     public void write(byte[] writeData){
         try{
-            if(this.isOpen()) this.usb.write(writeData, 100);
+            if(this.isOpen()) this.port.write(writeData, 100);
         }
         catch(IOException e){
             this.close();
